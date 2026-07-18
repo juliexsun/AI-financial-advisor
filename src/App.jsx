@@ -174,28 +174,32 @@ const AutofillBubble = ({ variation, onConfirm }) => {
     <div style={{ alignSelf: "flex-start", background: C.white, border: `1px solid ${C.grayLight}`, padding: 15, borderRadius: "15px 15px 15px 0", maxWidth: "95%" }}>
       <p style={{ marginBottom: 10, fontSize: 14 }}>I've filled in what I understand so far—can you edit the blanks to make sure I have this right?</p>
       <div style={{ background: C.accentLight, padding: 15, borderRadius: 10, color: C.primary, lineHeight: "1.6", opacity: confirmed ? 0.6 : 1, transition: "0.3s" }}>
+        
         {variation === 0 && (
           <>
             "The main source of my stress right now is <input disabled={confirmed} value={v0[0]} onChange={e=>setV0([e.target.value, v0[1], v0[2]])} style={inputStyle} />, because I am afraid that <input disabled={confirmed} value={v0[1]} onChange={e=>setV0([v0[0], e.target.value, v0[2]])} style={inputStyle} /> will happen by <input disabled={confirmed} value={v0[2]} onChange={e=>setV0([v0[0], v0[1], e.target.value])} style={inputStyle} />."
           </>
         )}
+        
         {variation === 1 && (
           <>
             "I am feeling overwhelmed by <input disabled={confirmed} value={v1[0]} onChange={e=>setV1([e.target.value, v1[1], v1[2]])} style={inputStyle} />, especially since my income is currently <input disabled={confirmed} value={v1[1]} onChange={e=>setV1([v1[0], e.target.value, v1[2]])} style={inputStyle} /> and my expenses feel <input disabled={confirmed} value={v1[2]} onChange={e=>setV1([v1[0], v1[1], e.target.value])} style={inputStyle} />."
           </>
         )}
+
         {variation === 2 && (
           <>
             "Right now, my top financial priority is <input disabled={confirmed} value={v2[0]} onChange={e=>setV2([e.target.value, v2[1], v2[2]])} style={inputStyle} />, but I don't know how to handle <input disabled={confirmed} value={v2[1]} onChange={e=>setV2([v2[0], e.target.value, v2[2]])} style={inputStyle} /> without <input disabled={confirmed} value={v2[2]} onChange={e=>setV2([v2[0], v2[1], e.target.value])} style={inputStyle} />."
           </>
         )}
+        
         {!confirmed && <button onClick={() => { setConfirmed(true); onConfirm(); }} style={btnStyle}>Looks correct &rarr;</button>}
       </div>
     </div>
   );
 };
 
-// 4. Editable Hypothesis Bubble (Checkboxes & Editable Text, No Strikethroughs)
+// 4. Editable Hypothesis Bubble
 const HypothesisBubble = ({ variation, onConfirm }) => {
   const options = [
     ["My income or expenses recently shifted.", "I am dealing with unexpected compounding costs.", "My housing costs recently increased."],
@@ -253,7 +257,7 @@ const HypothesisBubble = ({ variation, onConfirm }) => {
 
 export default function App() {
   const [messages, setMessages] = useState([
-    { id: 1, sender: "ai", type: "text", content: "I'm here for you. What's on your mind right now? Feel free to just let it all out." }
+    { id: Date.now(), sender: "ai", type: "text", content: "I'm here for you. What's on your mind right now? Feel free to just let it all out." }
   ]);
   const [inputText, setInputText] = useState("");
   
@@ -266,10 +270,18 @@ export default function App() {
   // Overlay & Timeline State
   const [financialTimeline, setFinancialTimeline] = useState([]); 
   const [timelineIndex, setTimelineIndex] = useState(0);
+  const [savedChats, setSavedChats] = useState([]); 
+  const [timelineTab, setTimelineTab] = useState("events"); 
 
   const [isFrantic, setIsFrantic] = useState(false);
   const [activeMedia, setActiveMedia] = useState(null);
   const [showTimeline, setShowTimeline] = useState(false);
+
+  // Typing Analytics Refs for Heuristics
+  const typingStats = useRef({
+    backspaceCount: 0,
+    recentMessages: [] // Array of { time, length }
+  });
 
   // Auto-scroll ref
   const messagesEndRef = useRef(null);
@@ -281,11 +293,36 @@ export default function App() {
   const handleTyping = (e) => {
     const text = e.target.value;
     setInputText(text);
-    if (text.length > 40 && !isFrantic) setIsFrantic(true);
-    else if (text.length <= 40 && isFrantic) setIsFrantic(false);
+
+    // Reset backspace count if the user clears the input completely
+    if (text.length === 0) {
+      typingStats.current.backspaceCount = 0;
+    }
   };
 
-  // Helper to progress the AI chat flow
+  const handleKeyDown = (e) => {
+    if (e.key === 'Enter' && !isInputDisabled) {
+      handleSendText();
+    }
+    
+    // Heuristic 1: Excessive Backspaces
+    if (e.key === 'Backspace') {
+      typingStats.current.backspaceCount += 1;
+      if (typingStats.current.backspaceCount >= 6 && !isFrantic) {
+        setIsFrantic(true);
+      }
+    }
+  };
+
+  const handleToggleSavedChat = (msg) => {
+    setSavedChats(prev => {
+      if (prev.some(m => m.id === msg.id)) {
+        return prev.filter(m => m.id !== msg.id);
+      }
+      return [...prev, msg];
+    });
+  };
+
   const progressAIFlow = () => {
     // Populate financial timeline implicitly behind the scenes
     if (timelineIndex < MOCK_TIMELINE_EVENTS.length) {
@@ -320,19 +357,38 @@ export default function App() {
 
   const handleSendText = () => {
     if (!inputText.trim()) return;
-    setMessages(prev => [...prev, { id: Date.now(), sender: "user", type: "text", content: inputText }]);
+    const now = Date.now();
+    const textLength = inputText.length;
+
+    setMessages(prev => [...prev, { id: now, sender: "user", type: "text", content: inputText }]);
+    
+    // --- Heuristic 2: Continuous quickly sending short messages ---
+    typingStats.current.recentMessages.push({ time: now, length: textLength });
+    
+    // Keep only messages from the last 15 seconds
+    typingStats.current.recentMessages = typingStats.current.recentMessages.filter(m => now - m.time < 15000);
+    
+    // Check if there are 3 or more short messages (< 30 chars) in this window
+    const shortMessages = typingStats.current.recentMessages.filter(m => m.length < 30);
+    
+    if (shortMessages.length >= 3) {
+      setIsFrantic(true);
+    } else {
+      setIsFrantic(false); // Clear the frantic state if they calm down
+    }
+
+    // Reset input state for the next message
     setInputText("");
-    setIsFrantic(false);
+    typingStats.current.backspaceCount = 0; 
+    
     progressAIFlow();
   };
 
   const handleSkip = () => {
-    // Treat the skip as a user message
-    setMessages(prev => [...prev, { id: Date.now(), sender: "user", type: "text", content: "I'd rather skip this question." }]);
     setIsFrantic(false);
     
     if (isInputDisabled) {
-      // Skipping an interactive widget
+      // Skipping an interactive widget silently
       setIsInputDisabled(false);
       setTimeout(() => {
         setMessages(prev => [
@@ -341,7 +397,7 @@ export default function App() {
         ]);
       }, 600);
     } else {
-      // Skipping a text question
+      // Skipping a text question silently
       progressAIFlow();
     }
   };
@@ -349,7 +405,6 @@ export default function App() {
   const handleWidgetConfirm = () => {
     setIsInputDisabled(false);
 
-    // Populate timeline if we still have events to show
     if (timelineIndex < MOCK_TIMELINE_EVENTS.length) {
       setFinancialTimeline(prev => [...prev, MOCK_TIMELINE_EVENTS[timelineIndex]]);
       setTimelineIndex(prev => prev + 1);
@@ -370,47 +425,93 @@ export default function App() {
         
         {/* Header */}
         <div style={{ background: C.white, padding: "50px 20px 15px", display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: `1px solid ${C.grayLight}`, position: "relative", zIndex: 5 }}>
-          <button onClick={() => setShowTimeline(true)} style={{ background: C.accentLight, color: C.accent, border: "none", width: 36, height: 36, borderRadius: 18, fontSize: 18, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
-            🗂️
+          <button onClick={() => setShowTimeline(true)} style={{ background: C.primaryLight, color: C.gray, border: "none", padding: "8px 12px", borderRadius: 18, fontSize: 14, fontWeight: "bold", cursor: "pointer", display: "flex", alignItems: "center", gap: 6, zIndex: 10 }}>
+            Timeline
           </button>
-          <div style={{ fontWeight: "bold", fontSize: 18 }}>AI Advisor</div>
-          <button onClick={() => setActiveMedia('call')} style={{ background: C.accentLight, color: C.accent, border: "none", width: 36, height: 36, borderRadius: 18, fontSize: 18, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
+          <div style={{ position: "absolute", left: "50%", transform: "translateX(-50%)", fontWeight: "bold", fontSize: 18, zIndex: 5 }}>
+            AI Advisor
+          </div>
+          <button onClick={() => setActiveMedia('call')} style={{ background: C.accentLight, color: C.accent, border: "none", width: 36, height: 36, borderRadius: 18, fontSize: 18, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 10 }}>
             📞
           </button>
         </div>
 
-        {/* Financial Timeline Overlay */}
+        {/* Timeline Overlay */}
         {showTimeline && (
           <div style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0, background: C.bg, zIndex: 25, display: "flex", flexDirection: "column" }}>
-            <div style={{ padding: "50px 20px 20px", background: C.white, borderBottom: `1px solid ${C.grayLight}`, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-              <h2 style={{ fontSize: 18 }}>Financial Timeline</h2>
+            <div style={{ padding: "50px 20px 0", background: C.white, display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+              <h2 style={{ fontSize: 18, margin: 0 }}>Timelines</h2>
               <button onClick={() => setShowTimeline(false)} style={{ background: "none", border: "none", fontSize: 24, cursor: "pointer" }}>✖</button>
             </div>
             
+            {/* Tabs */}
+            <div style={{ display: "flex", borderBottom: `1px solid ${C.grayLight}`, background: C.white }}>
+              <button onClick={() => setTimelineTab("events")} style={{ flex: 1, padding: 15, background: "none", border: "none", borderBottom: timelineTab === "events" ? `2px solid ${C.accent}` : "none", fontWeight: "bold", color: timelineTab === "events" ? C.primary : C.gray, cursor: "pointer" }}>
+                Financial Timeline
+              </button>
+              <button onClick={() => setTimelineTab("chats")} style={{ flex: 1, padding: 15, background: "none", border: "none", borderBottom: timelineTab === "chats" ? `2px solid ${C.accent}` : "none", fontWeight: "bold", color: timelineTab === "chats" ? C.primary : C.gray, cursor: "pointer" }}>
+                Conversation Timeline
+              </button>
+            </div>
+            
             <div style={{ padding: 20, overflowY: "auto", flex: 1, background: C.white }}>
-              <p style={{ color: C.gray, fontSize: 14, marginBottom: 20 }}>This is a map of your financial events as we piece them together.</p>
-              
-              {financialTimeline.length === 0 ? (
-                <p style={{ color: C.gray, textAlign: "center", marginTop: 40, fontStyle: "italic" }}>The timeline is empty. Chat with me to start building your profile.</p>
-              ) : (
-                <div style={{ position: "relative", marginLeft: 10 }}>
-                  <div style={{ position: "absolute", left: 7, top: 10, bottom: 0, width: 2, background: C.grayLight }} />
-                  <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
-                    {financialTimeline.map((item, i) => (
-                      <div key={i} style={{ display: "flex", gap: 15, zIndex: 1, position: "relative" }}>
-                        <div style={{ width: 16, height: 16, borderRadius: 8, background: C.accent, border: `3px solid ${C.white}`, marginTop: 2, flexShrink: 0 }} />
-                        <div style={{ flex: 1 }}>
-                          <div style={{ fontSize: 13, color: C.primary, marginBottom: 4, fontWeight: "bold" }}>
-                            {item.period}
+              {timelineTab === "events" ? (
+                <>
+                  <p style={{ color: C.gray, fontSize: 14, marginBottom: 20 }}>This is a map of your financial events as we piece them together.</p>
+                  
+                  {financialTimeline.length === 0 ? (
+                    <p style={{ color: C.gray, textAlign: "center", marginTop: 40, fontStyle: "italic" }}>The timeline is empty. Chat with me to start building your profile.</p>
+                  ) : (
+                    <div style={{ position: "relative", marginLeft: 10 }}>
+                      <div style={{ position: "absolute", left: 7, top: 10, bottom: 0, width: 2, background: C.grayLight }} />
+                      <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+                        {financialTimeline.map((item, i) => (
+                          <div key={i} style={{ display: "flex", gap: 15, zIndex: 1, position: "relative" }}>
+                            <div style={{ width: 16, height: 16, borderRadius: 8, background: C.accent, border: `3px solid ${C.white}`, marginTop: 2, flexShrink: 0 }} />
+                            <div style={{ flex: 1 }}>
+                              <div style={{ fontSize: 13, color: C.primary, marginBottom: 4, fontWeight: "bold" }}>
+                                {item.period}
+                              </div>
+                              <div style={{ background: C.bg, padding: "10px 15px", borderRadius: 8, fontSize: 14, border: `1px solid ${C.grayLight}`, color: C.gray }}>
+                                {item.event}
+                              </div>
+                            </div>
                           </div>
-                          <div style={{ background: C.bg, padding: "10px 15px", borderRadius: 8, fontSize: 14, border: `1px solid ${C.grayLight}`, color: C.gray }}>
-                            {item.event}
-                          </div>
-                        </div>
+                        ))}
                       </div>
-                    ))}
-                  </div>
-                </div>
+                    </div>
+                  )}
+                </>
+              ) : (
+                <>
+                  <p style={{ color: C.gray, fontSize: 14, marginBottom: 20 }}>Chats you've pinned or saved for later review.</p>
+                  
+                  {savedChats.length === 0 ? (
+                    <p style={{ color: C.gray, textAlign: "center", marginTop: 40, fontStyle: "italic" }}>No messages saved. Tap the 🔖 icon next to any message to save it here.</p>
+                  ) : (
+                    <div style={{ position: "relative", marginLeft: 10 }}>
+                      <div style={{ position: "absolute", left: 7, top: 10, bottom: 0, width: 2, background: C.grayLight }} />
+                      <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+                        {savedChats.map((msg, i) => (
+                          <div key={i} style={{ display: "flex", gap: 15, zIndex: 1, position: "relative" }}>
+                            <div style={{ width: 16, height: 16, borderRadius: 8, background: msg.sender === 'user' ? C.primary : C.accent, border: `3px solid ${C.white}`, marginTop: 2, flexShrink: 0 }} />
+                            <div style={{ flex: 1 }}>
+                              <div style={{ fontSize: 13, color: C.primary, marginBottom: 4, fontWeight: "bold", display: "flex", justifyContent: "space-between" }}>
+                                <span>{msg.sender === "user" ? "You" : "AI Advisor"}</span>
+                                <span style={{ fontSize: 11, color: C.gray, fontWeight: "normal" }}>
+                                  {new Date(msg.id).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                                </span>
+                              </div>
+                              <div style={{ background: C.bg, padding: "10px 15px", borderRadius: 8, fontSize: 14, border: `1px solid ${C.grayLight}`, color: C.gray }}>
+                                {msg.content}
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </>
               )}
             </div>
           </div>
@@ -441,18 +542,52 @@ export default function App() {
             if (msg.type === "hypothesis") return <HypothesisBubble key={msg.id} variation={msg.variation} onConfirm={handleWidgetConfirm} />;
             
             const isUser = msg.sender === "user";
+            const isSaved = savedChats.some(m => m.id === msg.id);
             
             return (
-              <div key={msg.id} style={{ 
-                alignSelf: isUser ? "flex-end" : "flex-start", 
-                background: isUser ? C.primary : C.white, 
-                color: isUser ? C.white : C.primary,
-                border: isUser ? "none" : `1px solid ${C.grayLight}`, 
-                padding: 15, 
-                borderRadius: isUser ? "15px 15px 0 15px" : "15px 15px 15px 0", 
-                maxWidth: "85%", lineHeight: "1.4"
-              }}>
-                {msg.content}
+              <div key={msg.id} className="msg-container" style={{ display: "flex", flexDirection: "column", alignItems: isUser ? "flex-end" : "flex-start", width: "100%" }}>
+                <div style={{ 
+                  display: "flex", 
+                  alignItems: "center", 
+                  gap: 8, 
+                  flexDirection: isUser ? "row-reverse" : "row", 
+                  maxWidth: "100%" 
+                }}>
+                  <div style={{ 
+                    background: isUser ? C.primary : C.white, 
+                    color: isUser ? C.white : C.primary,
+                    border: isUser ? "none" : `1px solid ${C.grayLight}`, 
+                    padding: 15, 
+                    borderRadius: isUser ? "15px 15px 0 15px" : "15px 15px 15px 0", 
+                    maxWidth: "85%", lineHeight: "1.4"
+                  }}>
+                    {msg.content}
+                  </div>
+                  
+                  {/* Bookmark/Swipe Action Button for Text Messages */}
+                  {msg.type === "text" && (
+                    <button 
+                      className={`bookmark-btn ${isSaved ? 'saved' : ''}`}
+                      onClick={() => handleToggleSavedChat(msg)} 
+                      style={{ 
+                        background: isSaved ? C.accentLight : "transparent", 
+                        border: `1px solid ${isSaved ? C.accent : C.grayLight}`, 
+                        borderRadius: 20, 
+                        padding: "6px 8px", 
+                        cursor: "pointer", 
+                        fontSize: 12, 
+                        color: C.primary, 
+                        display: "flex", 
+                        alignItems: "center", 
+                        gap: 4,
+                        flexShrink: 0,
+                        transition: "opacity 0.2s"
+                      }}
+                    >
+                      {isSaved ? "🔖 Saved" : "🔖"}
+                    </button>
+                  )}
+                </div>
               </div>
             );
           })}
@@ -484,7 +619,7 @@ export default function App() {
           <input 
             value={inputText}
             onChange={handleTyping}
-            onKeyPress={(e) => e.key === 'Enter' && !isInputDisabled && handleSendText()}
+            onKeyDown={handleKeyDown}
             disabled={isInputDisabled}
             placeholder={isInputDisabled ? "Please interact with the widget..." : "Message AI Advisor..."} 
             style={{ flex: 1, padding: "10px 15px", borderRadius: 20, border: `1px solid ${C.grayLight}`, outline: "none", background: isInputDisabled ? C.primaryLight : C.white }} 
@@ -499,6 +634,15 @@ export default function App() {
             0% { transform: scale(1); opacity: 1; }
             50% { transform: scale(1.1); opacity: 0.8; }
             100% { transform: scale(1); opacity: 1; }
+          }
+          .msg-container .bookmark-btn {
+            opacity: 0;
+            pointer-events: none;
+          }
+          .msg-container:hover .bookmark-btn,
+          .msg-container .bookmark-btn.saved {
+            opacity: 1;
+            pointer-events: auto;
           }
         `}</style>
       </div>
