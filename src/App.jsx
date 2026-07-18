@@ -18,6 +18,14 @@ const inputStyle = {
   fontSize: 14, paddingBottom: 4
 };
 
+const inlineInputStyle = {
+  border: "none", borderBottom: "2px dashed #3B82F6",
+  background: C.white, color: C.primary,
+  fontWeight: "bold", outline: "none",
+  width: "auto", minWidth: "100px", padding: "4px 8px", margin: "0 5px",
+  fontSize: 14, borderRadius: 4
+};
+
 const btnStyle = {
   background: "#3B82F6", color: "#FFF",
   border: "none", padding: "10px", borderRadius: 8,
@@ -50,7 +58,6 @@ const SUGGESTION_BANK = [
 
 const getRandom = (arr) => arr[Math.floor(Math.random() * arr.length)];
 
-// Simulated user timeline events that the AI "extracts" throughout the chat
 const MOCK_TIMELINE_EVENTS = [
   { period: "3-6 months ago", event: "Initial shift in income or an unexpected expense occurred." },
   { period: "1 month ago", event: "Started falling behind on standard billing cycles and minimum payments." },
@@ -58,10 +65,8 @@ const MOCK_TIMELINE_EVENTS = [
   { period: "Next 30 Days", event: "Need to negotiate extensions and pause automated withdrawals." }
 ];
 
-
 // --- INTERACTIVE SUB-COMPONENTS ---
 
-// 1. Drag & Drop Categorization Widget
 const CategorizeBubble = ({ onConfirm }) => {
   const [pool, setPool] = useState(["Making next month's rent", "Inflation / Grocery prices", "Finding a new job", "Cutting my daily expenses"]);
   const [control, setControl] = useState([]);
@@ -127,7 +132,6 @@ const CategorizeBubble = ({ onConfirm }) => {
   );
 };
 
-// 2. Ranking Widget
 const RankBubble = ({ onConfirm }) => {
   const [items, setItems] = useState(["Address Credit Card Minimums", "Secure Grocery Budget", "Negotiate Rent Extension"]);
   const [confirmed, setConfirmed] = useState(false);
@@ -163,7 +167,6 @@ const RankBubble = ({ onConfirm }) => {
   );
 };
 
-// 3. Autofill Template
 const AutofillBubble = ({ variation, onConfirm }) => {
   const [v0, setV0] = useState(["my financial situation", "I will fall behind", "the end of the month"]);
   const [v1, setV1] = useState(["mounting bills", "inconsistent", "higher than normal"]);
@@ -199,7 +202,34 @@ const AutofillBubble = ({ variation, onConfirm }) => {
   );
 };
 
-// 4. Editable Hypothesis Bubble
+const MadLibsBubble = ({ onConfirm }) => {
+  const [billType, setBillType] = useState("Rent");
+  const [dueDate, setDueDate] = useState("");
+  const [shortAmount, setShortAmount] = useState("");
+  const [confirmed, setConfirmed] = useState(false);
+
+  return (
+    <div style={{ alignSelf: "flex-start", background: C.accentLight, border: `1px solid ${C.accent}`, padding: 15, borderRadius: "15px 15px 15px 0", maxWidth: "95%", color: C.primary, lineHeight: "2.2" }}>
+      <p style={{ marginBottom: 10, fontSize: 14, fontWeight: "bold", lineHeight: "1.4" }}>Let's build a quick scenario. Fill in the blanks:</p>
+      
+      "I need to pay my 
+      <select disabled={confirmed} value={billType} onChange={e=>setBillType(e.target.value)} style={inlineInputStyle}>
+        <option value="Rent">Rent</option>
+        <option value="Car Payment">Car Payment</option>
+        <option value="Credit Card">Credit Card</option>
+        <option value="Utility Bill">Utility Bill</option>
+        <option value="Medical Bill">Medical Bill</option>
+      </select>
+      by 
+      <input type="date" disabled={confirmed} value={dueDate} onChange={e=>setDueDate(e.target.value)} style={inlineInputStyle} />
+      but I am currently short $
+      <input type="number" placeholder="0.00" disabled={confirmed} value={shortAmount} onChange={e=>setShortAmount(e.target.value)} style={{...inlineInputStyle, width: "80px"}} />."
+
+      {!confirmed && <button onClick={() => { setConfirmed(true); onConfirm(); }} style={btnStyle}>Save Scenario &rarr;</button>}
+    </div>
+  );
+};
+
 const HypothesisBubble = ({ variation, onConfirm }) => {
   const options = [
     ["My income or expenses recently shifted.", "I am dealing with unexpected compounding costs.", "My housing costs recently increased."],
@@ -261,13 +291,12 @@ export default function App() {
   ]);
   const [inputText, setInputText] = useState("");
   
-  // App Logic State
   const [textCounter, setTextCounter] = useState(0); 
-  const [widgetSequence, setWidgetSequence] = useState(["categorize", "rank", "autofill", "hypothesis"]);
+  // Adjusted widgetSequence so categorize only happens exactly once per loop, and madlibs is properly slotted in.
+  const [widgetSequence] = useState(["categorize", "madlibs", "rank", "autofill", "hypothesis"]);
   const [widgetIndex, setWidgetIndex] = useState(0);
   const [isInputDisabled, setIsInputDisabled] = useState(false);
   
-  // Overlay & Timeline State
   const [financialTimeline, setFinancialTimeline] = useState([]); 
   const [timelineIndex, setTimelineIndex] = useState(0);
   const [savedChats, setSavedChats] = useState([]); 
@@ -277,26 +306,46 @@ export default function App() {
   const [activeMedia, setActiveMedia] = useState(null);
   const [showTimeline, setShowTimeline] = useState(false);
 
-  // Typing Analytics Refs for Heuristics
+  // New Focus Intervention States
+  const [showTools, setShowTools] = useState(false);
+  const [isBrainDumpMode, setIsBrainDumpMode] = useState(false);
+  const [isBlurMode, setIsBlurMode] = useState(false);
+  const [isBreathing, setIsBreathing] = useState(false);
+
   const typingStats = useRef({
-    backspaceCount: 0,
-    recentMessages: [] // Array of { time, length }
+    recentBackspaces: [], 
+    recentMessages: [] 
   });
 
-  // Auto-scroll ref
   const messagesEndRef = useRef(null);
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages]);
+  }, [messages, isBrainDumpMode]);
 
-  // --- HANDLERS ---
+  // Handle Frantic Auto-Dismiss
+  useEffect(() => {
+    let timeout;
+    if (isFrantic) {
+      timeout = setTimeout(() => {
+        setIsFrantic(false);
+      }, 15000);
+    }
+    return () => clearTimeout(timeout);
+  }, [isFrantic]);
+
+  // Breathing Auto-Dismiss
+  useEffect(() => {
+    let timeout;
+    if (isBreathing) timeout = setTimeout(() => setIsBreathing(false), 15000);
+    return () => clearTimeout(timeout);
+  }, [isBreathing]);
+
   const handleTyping = (e) => {
     const text = e.target.value;
     setInputText(text);
 
-    // Reset backspace count if the user clears the input completely
     if (text.length === 0) {
-      typingStats.current.backspaceCount = 0;
+      typingStats.current.recentBackspaces = [];
     }
   };
 
@@ -305,10 +354,15 @@ export default function App() {
       handleSendText();
     }
     
-    // Heuristic 1: Excessive Backspaces
     if (e.key === 'Backspace') {
-      typingStats.current.backspaceCount += 1;
-      if (typingStats.current.backspaceCount >= 6 && !isFrantic) {
+      const now = Date.now();
+      typingStats.current.recentBackspaces.push(now);
+      
+      // Keep only backspaces from the last 10 seconds
+      typingStats.current.recentBackspaces = typingStats.current.recentBackspaces.filter(time => now - time < 10000);
+      
+      // Trigger if 20 or more backspaces occur within that 10-second window
+      if (typingStats.current.recentBackspaces.length >= 20 && !isFrantic) {
         setIsFrantic(true);
       }
     }
@@ -324,7 +378,6 @@ export default function App() {
   };
 
   const progressAIFlow = () => {
-    // Populate financial timeline implicitly behind the scenes
     if (timelineIndex < MOCK_TIMELINE_EVENTS.length) {
       setFinancialTimeline(prev => [...prev, MOCK_TIMELINE_EVENTS[timelineIndex]]);
       setTimelineIndex(prev => prev + 1);
@@ -333,15 +386,13 @@ export default function App() {
     const newCounter = textCounter + 1;
 
     setTimeout(() => {
-      // REQUIRE AT LEAST 2 TEXT EXCHANGES BEFORE A WIDGET
       if (newCounter < 2) {
         setTextCounter(newCounter);
         const replyType = newCounter % 2 === 1 ? EMPATHY_BANK : FINANCE_BANK;
         setMessages(prev => [...prev, { id: Date.now()+1, sender: "ai", type: "text", content: getRandom(replyType) }]);
       } else {
-        // TIME FOR A WIDGET
         setTextCounter(0); 
-        setIsInputDisabled(true); // Lock text input until widget is completed/skipped
+        setIsInputDisabled(true); 
         const nextWidget = widgetSequence[widgetIndex];
         const v = Math.floor(Math.random() * 3); 
         
@@ -362,33 +413,30 @@ export default function App() {
 
     setMessages(prev => [...prev, { id: now, sender: "user", type: "text", content: inputText }]);
     
-    // --- Heuristic 2: Continuous quickly sending short messages ---
     typingStats.current.recentMessages.push({ time: now, length: textLength });
-    
-    // Keep only messages from the last 15 seconds
     typingStats.current.recentMessages = typingStats.current.recentMessages.filter(m => now - m.time < 15000);
     
-    // Check if there are 3 or more short messages (< 30 chars) in this window
     const shortMessages = typingStats.current.recentMessages.filter(m => m.length < 30);
     
     if (shortMessages.length >= 3) {
       setIsFrantic(true);
     } else {
-      setIsFrantic(false); // Clear the frantic state if they calm down
+      setIsFrantic(false); 
     }
 
-    // Reset input state for the next message
     setInputText("");
-    typingStats.current.backspaceCount = 0; 
+    typingStats.current.recentBackspaces = []; 
     
-    progressAIFlow();
+    // Only progress the AI if we are NOT in Brain Dump mode
+    if (!isBrainDumpMode) {
+      progressAIFlow();
+    }
   };
 
   const handleSkip = () => {
     setIsFrantic(false);
     
     if (isInputDisabled) {
-      // Skipping an interactive widget silently
       setIsInputDisabled(false);
       setTimeout(() => {
         setMessages(prev => [
@@ -397,7 +445,6 @@ export default function App() {
         ]);
       }, 600);
     } else {
-      // Skipping a text question silently
       progressAIFlow();
     }
   };
@@ -418,23 +465,78 @@ export default function App() {
     }, 600);
   };
 
+  const stopBrainDump = () => {
+    setIsBrainDumpMode(false);
+    progressAIFlow(); // Trigger AI response now that venting is over
+  };
+
   // --- MAIN RENDER ---
   return (
     <div style={{ display: "flex", justifyContent: "center", alignItems: "center", minHeight: "100vh", padding: 20 }}>
       <div style={{ width: 393, height: 852, borderRadius: 44, overflow: "hidden", position: "relative", background: C.bg, boxShadow: "0 20px 40px rgba(0,0,0,0.1)" }}>
         
         {/* Header */}
-        <div style={{ background: C.white, padding: "50px 20px 15px", display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: `1px solid ${C.grayLight}`, position: "relative", zIndex: 5 }}>
-          <button onClick={() => setShowTimeline(true)} style={{ background: C.primaryLight, color: C.gray, border: "none", padding: "8px 12px", borderRadius: 18, fontSize: 14, fontWeight: "bold", cursor: "pointer", display: "flex", alignItems: "center", gap: 6, zIndex: 10 }}>
+        <div style={{ background: C.white, padding: "50px 20px 15px", display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: `1px solid ${C.grayLight}`, position: "relative", zIndex: 15 }}>
+          <button onClick={() => setShowTimeline(true)} style={{ background: C.primaryLight, color: C.gray, border: "none", padding: "8px 12px", borderRadius: 18, fontSize: 13, fontWeight: "bold", cursor: "pointer", zIndex: 10 }}>
             Timeline
           </button>
+          
           <div style={{ position: "absolute", left: "50%", transform: "translateX(-50%)", fontWeight: "bold", fontSize: 18, zIndex: 5 }}>
             AI Advisor
           </div>
-          <button onClick={() => setActiveMedia('call')} style={{ background: C.accentLight, color: C.accent, border: "none", width: 36, height: 36, borderRadius: 18, fontSize: 18, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 10 }}>
-            📞
-          </button>
+
+          <div style={{ display: "flex", gap: 5 }}>
+            <button onClick={() => setActiveMedia('call')} style={{ background: C.accentLight, color: C.accent, border: "none", width: 32, height: 32, borderRadius: 16, fontSize: 16, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 10 }}>
+              📞
+            </button>
+            <button onClick={() => setShowTools(!showTools)} style={{ background: C.primaryLight, color: C.primary, border: "none", padding: "8px 12px", borderRadius: 18, fontSize: 13, fontWeight: "bold", cursor: "pointer", zIndex: 10 }}>
+              🛠️
+            </button>
+          </div>
+
+          {/* Tools Dropdown */}
+          {showTools && (
+            <div style={{ position: "absolute", top: 85, right: 20, background: C.white, padding: 15, borderRadius: 12, boxShadow: "0 8px 24px rgba(0,0,0,0.15)", zIndex: 30, border: `1px solid ${C.grayLight}`, width: 200 }}>
+              <h4 style={{ margin: "0 0 10px 0", fontSize: 13, color: C.gray }}>Focus Interventions</h4>
+              <label style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 15, fontSize: 14, cursor: "pointer" }}>
+                <input type="checkbox" checked={isBrainDumpMode} onChange={e => { setIsBrainDumpMode(e.target.checked); setShowTools(false); }} style={{ width: 16, height: 16 }} />
+                Brain Dump Mode
+              </label>
+              <label style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 14, cursor: "pointer" }}>
+                <input type="checkbox" checked={isBlurMode} onChange={e => { setIsBlurMode(e.target.checked); setShowTools(false); }} style={{ width: 16, height: 16 }} />
+                Blur Chat History
+              </label>
+            </div>
+          )}
         </div>
+
+        {/* Media Overlay */}
+        {activeMedia && (
+          <div style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0, background: "rgba(15, 23, 42, 0.95)", zIndex: 50, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", color: C.white, padding: 30, textAlign: "center", backdropFilter: "blur(5px)" }}>
+            <div style={{ fontSize: 60, marginBottom: 20, animation: activeMedia !== 'camera' ? "pulse 1.5s infinite" : "none" }}>
+              {activeMedia === 'call' ? '📞' : activeMedia === 'voice' ? '🎙️' : '📷'}
+            </div>
+            <h2 style={{ marginBottom: 10 }}>{activeMedia === 'call' ? 'Live AI Call Active' : activeMedia === 'voice' ? 'Listening...' : 'Camera Active'}</h2>
+            <p style={{ color: C.grayLight, marginBottom: 40, lineHeight: 1.5 }}>
+              {activeMedia === 'camera' ? 'Snap a photo of your bills, notices, or documents.' : 'Speak naturally. I am analyzing your tone to better assist you.'}
+            </p>
+            <button onClick={() => setActiveMedia(null)} style={{ background: "#EF4444", color: C.white, border: "none", padding: "15px 30px", borderRadius: 30, fontSize: 16, fontWeight: "bold", cursor: "pointer" }}>
+              ✖ End {activeMedia === 'call' ? 'Call' : 'Mode'}
+            </button>
+          </div>
+        )}
+
+        {/* Breathing Overlay */}
+        {isBreathing && (
+          <div style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0, background: "rgba(15, 23, 42, 0.95)", zIndex: 40, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", color: C.white, textAlign: "center", backdropFilter: "blur(8px)" }}>
+            <div className="breathe-circle" style={{ width: 120, height: 120, borderRadius: "50%", background: C.accent, marginBottom: 40 }} />
+            <h2 style={{ marginBottom: 10, fontSize: 24 }}>Breathe with me.</h2>
+            <p style={{ color: C.grayLight, marginBottom: 40, fontSize: 16 }}>Inhale... Exhale...</p>
+            <button onClick={() => setIsBreathing(false)} style={{ background: "transparent", color: C.grayLight, border: `1px solid ${C.grayLight}`, padding: "10px 24px", borderRadius: 20, fontSize: 14, cursor: "pointer" }}>
+              Return to Chat
+            </button>
+          </div>
+        )}
 
         {/* Timeline Overlay */}
         {showTimeline && (
@@ -444,7 +546,6 @@ export default function App() {
               <button onClick={() => setShowTimeline(false)} style={{ background: "none", border: "none", fontSize: 24, cursor: "pointer" }}>✖</button>
             </div>
             
-            {/* Tabs */}
             <div style={{ display: "flex", borderBottom: `1px solid ${C.grayLight}`, background: C.white }}>
               <button onClick={() => setTimelineTab("events")} style={{ flex: 1, padding: 15, background: "none", border: "none", borderBottom: timelineTab === "events" ? `2px solid ${C.accent}` : "none", fontWeight: "bold", color: timelineTab === "events" ? C.primary : C.gray, cursor: "pointer" }}>
                 Financial Timeline
@@ -498,9 +599,6 @@ export default function App() {
                             <div style={{ flex: 1 }}>
                               <div style={{ fontSize: 13, color: C.primary, marginBottom: 4, fontWeight: "bold", display: "flex", justifyContent: "space-between" }}>
                                 <span>{msg.sender === "user" ? "You" : "AI Advisor"}</span>
-                                <span style={{ fontSize: 11, color: C.gray, fontWeight: "normal" }}>
-                                  {new Date(msg.id).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
-                                </span>
                               </div>
                               <div style={{ background: C.bg, padding: "10px 15px", borderRadius: 8, fontSize: 14, border: `1px solid ${C.grayLight}`, color: C.gray }}>
                                 {msg.content}
@@ -517,115 +615,91 @@ export default function App() {
           </div>
         )}
 
-        {/* Media Overlay (GPT-Live / Voice / Camera Mode) */}
-        {activeMedia && (
-          <div style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0, background: "rgba(15, 23, 42, 0.95)", zIndex: 20, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", color: C.white, padding: 30, textAlign: "center", backdropFilter: "blur(5px)" }}>
-            <div style={{ fontSize: 60, marginBottom: 20, animation: activeMedia !== 'camera' ? "pulse 1.5s infinite" : "none" }}>
-              {activeMedia === 'call' ? '📞' : activeMedia === 'voice' ? '🎙️' : '📷'}
-            </div>
-            <h2 style={{ marginBottom: 10 }}>{activeMedia === 'call' ? 'Live AI Call Active' : activeMedia === 'voice' ? 'Listening...' : 'Camera Active'}</h2>
-            <p style={{ color: C.grayLight, marginBottom: 40, lineHeight: 1.5 }}>
-              {activeMedia === 'camera' ? 'Snap a photo of your bills, notices, or documents.' : 'Speak naturally. I am analyzing your tone to better assist you.'}
-            </p>
-            <button onClick={() => setActiveMedia(null)} style={{ background: "#EF4444", color: C.white, border: "none", padding: "15px 30px", borderRadius: 30, fontSize: 16, fontWeight: "bold", cursor: "pointer" }}>
-              ✖ End {activeMedia === 'call' ? 'Call' : 'Mode'}
-            </button>
-          </div>
-        )}
-
         {/* Chat Feed */}
         <div style={{ padding: 20, height: "calc(100% - 165px)", overflowY: "auto", display: "flex", flexDirection: "column", gap: 15 }}>
-          {messages.map((msg) => {
-            if (msg.type === "categorize") return <CategorizeBubble key={msg.id} onConfirm={handleWidgetConfirm} />;
-            if (msg.type === "rank") return <RankBubble key={msg.id} onConfirm={handleWidgetConfirm} />;
-            if (msg.type === "autofill") return <AutofillBubble key={msg.id} variation={msg.variation} onConfirm={handleWidgetConfirm} />;
-            if (msg.type === "hypothesis") return <HypothesisBubble key={msg.id} variation={msg.variation} onConfirm={handleWidgetConfirm} />;
-            
-            const isUser = msg.sender === "user";
-            const isSaved = savedChats.some(m => m.id === msg.id);
-            
-            return (
-              <div key={msg.id} className="msg-container" style={{ display: "flex", flexDirection: "column", alignItems: isUser ? "flex-end" : "flex-start", width: "100%" }}>
-                <div style={{ 
-                  display: "flex", 
-                  alignItems: "center", 
-                  gap: 8, 
-                  flexDirection: isUser ? "row-reverse" : "row", 
-                  maxWidth: "100%" 
-                }}>
-                  <div style={{ 
-                    background: isUser ? C.primary : C.white, 
-                    color: isUser ? C.white : C.primary,
-                    border: isUser ? "none" : `1px solid ${C.grayLight}`, 
-                    padding: 15, 
-                    borderRadius: isUser ? "15px 15px 0 15px" : "15px 15px 15px 0", 
-                    maxWidth: "85%", lineHeight: "1.4"
-                  }}>
-                    {msg.content}
+          {messages.map((msg, index) => {
+            // Apply Blur Mode logic: blur all messages except the very last one
+            const isLastMessage = index === messages.length - 1;
+            const applyBlur = isBlurMode && !isLastMessage;
+            const blurStyle = applyBlur ? { filter: "blur(5px)", opacity: 0.6, pointerEvents: "none", transition: "0.3s" } : { transition: "0.3s" };
+
+            let content;
+            if (msg.type === "categorize") content = <CategorizeBubble onConfirm={handleWidgetConfirm} />;
+            else if (msg.type === "rank") content = <RankBubble onConfirm={handleWidgetConfirm} />;
+            else if (msg.type === "autofill") content = <AutofillBubble variation={msg.variation} onConfirm={handleWidgetConfirm} />;
+            else if (msg.type === "madlibs") content = <MadLibsBubble onConfirm={handleWidgetConfirm} />;
+            else if (msg.type === "hypothesis") content = <HypothesisBubble variation={msg.variation} onConfirm={handleWidgetConfirm} />;
+            else {
+              const isUser = msg.sender === "user";
+              const isSaved = savedChats.some(m => m.id === msg.id);
+              
+              content = (
+                <div className="msg-container" style={{ display: "flex", flexDirection: "column", alignItems: isUser ? "flex-end" : "flex-start", width: "100%" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, flexDirection: isUser ? "row-reverse" : "row", maxWidth: "100%" }}>
+                    <div style={{ background: isUser ? C.primary : C.white, color: isUser ? C.white : C.primary, border: isUser ? "none" : `1px solid ${C.grayLight}`, padding: 15, borderRadius: isUser ? "15px 15px 0 15px" : "15px 15px 15px 0", maxWidth: "85%", lineHeight: "1.4" }}>
+                      {msg.content}
+                    </div>
+                    {msg.type === "text" && (
+                      <button className={`bookmark-btn ${isSaved ? 'saved' : ''}`} onClick={() => handleToggleSavedChat(msg)} style={{ background: isSaved ? C.accentLight : "transparent", border: `1px solid ${isSaved ? C.accent : C.grayLight}`, borderRadius: 20, padding: "6px 8px", cursor: "pointer", fontSize: 12, color: C.primary, display: "flex", alignItems: "center", gap: 4, flexShrink: 0, transition: "opacity 0.2s" }}>
+                        {isSaved ? "🔖 Saved" : "🔖"}
+                      </button>
+                    )}
                   </div>
-                  
-                  {/* Bookmark/Swipe Action Button for Text Messages */}
-                  {msg.type === "text" && (
-                    <button 
-                      className={`bookmark-btn ${isSaved ? 'saved' : ''}`}
-                      onClick={() => handleToggleSavedChat(msg)} 
-                      style={{ 
-                        background: isSaved ? C.accentLight : "transparent", 
-                        border: `1px solid ${isSaved ? C.accent : C.grayLight}`, 
-                        borderRadius: 20, 
-                        padding: "6px 8px", 
-                        cursor: "pointer", 
-                        fontSize: 12, 
-                        color: C.primary, 
-                        display: "flex", 
-                        alignItems: "center", 
-                        gap: 4,
-                        flexShrink: 0,
-                        transition: "opacity 0.2s"
-                      }}
-                    >
-                      {isSaved ? "🔖 Saved" : "🔖"}
-                    </button>
-                  )}
                 </div>
-              </div>
-            );
+              );
+            }
+
+            return <div key={msg.id} style={blurStyle}>{content}</div>;
           })}
-          <div ref={messagesEndRef} />
+          <div ref={messagesEndRef} style={{ height: isBrainDumpMode ? 40 : 0 }} />
         </div>
 
-        {/* Floating Actions (Skip & Frantic) */}
+        {/* Floating Actions */}
         <div style={{ position: "absolute", bottom: 85, left: 0, width: "100%", display: "flex", flexDirection: "column", alignItems: "center", gap: 10, zIndex: 10, pointerEvents: "none" }}>
           
-          {/* Universal Skip Button (Always visible when waiting for user) */}
-          <button onClick={handleSkip} style={{ background: C.white, border: `1px solid ${C.grayLight}`, padding: "6px 16px", borderRadius: 20, fontSize: 13, fontWeight: "bold", color: C.gray, cursor: "pointer", pointerEvents: "auto", boxShadow: "0 2px 8px rgba(0,0,0,0.05)" }}>
-            Skip Question ⏭️
-          </button>
+          {/* Universal Skip Button */}
+          {!isBrainDumpMode && (
+            <button onClick={handleSkip} style={{ background: C.white, border: `1px solid ${C.grayLight}`, padding: "6px 16px", borderRadius: 20, fontSize: 13, fontWeight: "bold", color: C.gray, cursor: "pointer", pointerEvents: "auto", boxShadow: "0 2px 8px rgba(0,0,0,0.05)" }}>
+              Skip Question ⏭️
+            </button>
+          )}
 
-          {/* Frantic Typing Warning */}
-          {isFrantic && (
+          {/* Brain Dump Done Button */}
+          {isBrainDumpMode && (
+             <button onClick={stopBrainDump} style={{ background: C.primary, border: "none", padding: "10px 20px", borderRadius: 20, fontSize: 14, fontWeight: "bold", color: C.white, cursor: "pointer", pointerEvents: "auto", boxShadow: "0 4px 12px rgba(0,0,0,0.2)" }}>
+               I'm Done Dumping &rarr;
+             </button>
+          )}
+
+          {/* Frantic Warning with Breathe Intervention */}
+          {isFrantic && !isBrainDumpMode && (
             <div style={{ background: C.warning, border: `1px solid ${C.warningText}`, padding: "10px 15px", borderRadius: 20, fontSize: 13, boxShadow: "0 4px 12px rgba(0,0,0,0.1)", display: "flex", alignItems: "center", gap: 10, pointerEvents: "auto" }}>
-              <span style={{ color: C.warningText, fontWeight: "bold" }}>Frantic typing detected.</span>
-              <button onClick={() => { setIsFrantic(false); setActiveMedia('voice'); }} style={{ background: C.warningText, color: C.white, border: "none", padding: "6px 10px", borderRadius: 10, cursor: "pointer", fontWeight: "bold" }}>🎙️ Speak</button>
-              <button onClick={() => { setIsFrantic(false); setActiveMedia('call'); }} style={{ background: C.warningText, color: C.white, border: "none", padding: "6px 10px", borderRadius: 10, cursor: "pointer", fontWeight: "bold" }}>📞 Call</button>
+              <span style={{ color: C.warningText, fontWeight: "bold" }}>Typing fast. Take a breath?</span>
+              <button onClick={() => { setIsFrantic(false); setIsBreathing(true); }} style={{ background: C.warningText, color: C.white, border: "none", padding: "6px 12px", borderRadius: 12, cursor: "pointer", fontWeight: "bold" }}>
+                🌬️ Breathe
+              </button>
+              <button onClick={() => setIsFrantic(false)} style={{ background: "transparent", color: C.warningText, border: "none", cursor: "pointer", fontWeight: "bold", fontSize: 16 }}>✖</button>
             </div>
           )}
         </div>
 
         {/* Chat Input Area */}
-        <div style={{ position: "absolute", bottom: 0, width: "100%", background: C.white, padding: "15px 20px 30px", borderTop: `1px solid ${C.grayLight}`, display: "flex", gap: 10, alignItems: "center", zIndex: 5 }}>
-          <button onClick={() => setActiveMedia('voice')} style={{ background: "none", border: "none", fontSize: 22, cursor: "pointer", opacity: 0.7 }}>🎙️</button>
-          <button onClick={() => setActiveMedia('camera')} style={{ background: "none", border: "none", fontSize: 22, cursor: "pointer", opacity: 0.7 }}>📷</button>
+        <div style={{ position: "absolute", bottom: 0, width: "100%", background: C.white, padding: "15px 20px 30px", borderTop: `1px solid ${C.grayLight}`, display: "flex", gap: 10, alignItems: "center", zIndex: 5, transition: "0.3s" }}>
+          
+          <button onClick={() => setActiveMedia('voice')} style={{ background: "none", border: "none", fontSize: 22, cursor: "pointer", opacity: 0.7, display: isBrainDumpMode ? "none" : "block" }}>🎙️</button>
+          <button onClick={() => setActiveMedia('camera')} style={{ background: "none", border: "none", fontSize: 22, cursor: "pointer", opacity: 0.7, display: isBrainDumpMode ? "none" : "block" }}>📷</button>
+          
           <input 
             value={inputText}
             onChange={handleTyping}
             onKeyDown={handleKeyDown}
-            disabled={isInputDisabled}
-            placeholder={isInputDisabled ? "Please interact with the widget..." : "Message AI Advisor..."} 
-            style={{ flex: 1, padding: "10px 15px", borderRadius: 20, border: `1px solid ${C.grayLight}`, outline: "none", background: isInputDisabled ? C.primaryLight : C.white }} 
+            disabled={isInputDisabled && !isBrainDumpMode}
+            placeholder={isInputDisabled && !isBrainDumpMode ? "Please interact with the widget..." : isBrainDumpMode ? "Keep dumping thoughts here..." : "Message AI Advisor..."} 
+            style={{ flex: 1, padding: "10px 15px", borderRadius: 20, border: `1px solid ${isBrainDumpMode ? C.accent : C.grayLight}`, outline: "none", background: isInputDisabled && !isBrainDumpMode ? C.primaryLight : C.white }} 
           />
-          <button onClick={() => handleSendText()} disabled={!inputText.trim() || isInputDisabled} style={{ background: inputText.trim() && !isInputDisabled ? C.accent : C.grayLight, color: C.white, border: "none", padding: "10px 15px", borderRadius: 20, fontWeight: "bold", cursor: "pointer", transition: "0.2s" }}>
-            Send
+          
+          <button onClick={handleSendText} disabled={!inputText.trim() || (isInputDisabled && !isBrainDumpMode)} style={{ background: inputText.trim() && !(isInputDisabled && !isBrainDumpMode) ? (isBrainDumpMode ? C.accent : C.primary) : C.grayLight, color: C.white, border: "none", padding: "10px 15px", borderRadius: 20, fontWeight: "bold", cursor: "pointer", transition: "0.2s", whiteSpace: "nowrap" }}>
+            {isBrainDumpMode ? "Keep Dumping" : "Send"}
           </button>
         </div>
 
@@ -634,6 +708,14 @@ export default function App() {
             0% { transform: scale(1); opacity: 1; }
             50% { transform: scale(1.1); opacity: 0.8; }
             100% { transform: scale(1); opacity: 1; }
+          }
+          @keyframes breathe {
+            0% { transform: scale(1); opacity: 0.8; }
+            50% { transform: scale(1.6); opacity: 0.3; }
+            100% { transform: scale(1); opacity: 0.8; }
+          }
+          .breathe-circle {
+            animation: breathe 4s ease-in-out infinite;
           }
           .msg-container .bookmark-btn {
             opacity: 0;
